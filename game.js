@@ -132,6 +132,7 @@ class Ship {
     this.thrusting     = false;
     this.invincible    = 3;
     this.shootCooldown = 0;
+    this.speedBoost    = 0;
     this.dead          = false;
   }
 
@@ -139,18 +140,21 @@ class Ship {
     if (this.dead) return;
     if (this.invincible    > 0) this.invincible    -= dt;
     if (this.shootCooldown > 0) this.shootCooldown -= dt;
+    if (this.speedBoost    > 0) this.speedBoost    -= dt;
 
-    const ROT   = 3.5;   // rad/s
-    const THRUST = 260;  // px/s²
-    const DRAG   = 0.987;
+    const ROT        = 3.5;    // rad/s
+    const THRUST     = 260;    // px/s²
+    const BOOST_MULT = 1.8;    // multiplicador de velocidad del power-up
+    const DRAG       = 0.987;
 
     if (keys['ArrowLeft'])  this.angle -= ROT * dt;
     if (keys['ArrowRight']) this.angle += ROT * dt;
 
     this.thrusting = !!keys['ArrowUp'];
+    const thrust = this.speedBoost > 0 ? THRUST * BOOST_MULT : THRUST;
     if (this.thrusting) {
-      this.vx += Math.cos(this.angle) * THRUST * dt;
-      this.vy += Math.sin(this.angle) * THRUST * dt;
+      this.vx += Math.cos(this.angle) * thrust * dt;
+      this.vy += Math.sin(this.angle) * thrust * dt;
     }
 
     this.vx *= DRAG;
@@ -176,9 +180,18 @@ class Ship {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
-    ctx.strokeStyle = '#fff';
+    ctx.strokeStyle = this.speedBoost > 0 ? '#ffd700' : '#fff';
     ctx.lineWidth   = 1.5;
     ctx.lineJoin    = 'round';
+
+    // Aura amarilla cuando el power-up de velocidad está activo
+    if (this.speedBoost > 0) {
+      ctx.beginPath();
+      ctx.arc(0, 0, 22, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255, 215, 0, 0.35)';
+      ctx.stroke();
+      ctx.strokeStyle = '#ffd700';
+    }
 
     // Silueta clásica: triángulo con muesca trasera
     ctx.beginPath();
@@ -235,8 +248,50 @@ class Particle {
   }
 }
 
+// ── Power-up (velocidad) ──────────────────────────────────────────────────────
+const POWERUP_TTL = 10;  // segundos antes de desaparecer
+
+class SpeedPowerUp {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.radius = 14;
+    this.ttl = POWERUP_TTL;
+    this.dead = false;
+  }
+
+  update(dt) {
+    this.ttl -= dt;
+    if (this.ttl <= 0) this.dead = true;
+  }
+
+  draw() {
+    // Parpadeo cuando está por desaparecer
+    if (this.ttl < 2 && Math.floor(this.ttl * 6) % 2 === 0) return;
+
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.strokeStyle = '#ffd700';
+    ctx.lineWidth   = 2;
+    ctx.lineJoin    = 'round';
+
+    // Doble flecha ">>" indicando velocidad
+    ctx.beginPath();
+    ctx.moveTo(-6, -8);
+    ctx.lineTo( 4,  0);
+    ctx.lineTo(-6,  8);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo( 0, -8);
+    ctx.lineTo(10,  0);
+    ctx.lineTo( 0,  8);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
 // ── Estado del juego ──────────────────────────────────────────────────────────
-let ship, bullets, asteroids, particles;
+let ship, bullets, asteroids, particles, powerUps;
 let score, lives, level;
 let state;      // 'playing' | 'dead' | 'gameover'
 let deadTimer;
@@ -258,6 +313,7 @@ function initGame() {
   bullets   = [];
   asteroids = [];
   particles = [];
+  powerUps  = [];
   score  = 0;
   lives  = 3;
   level  = 1;
@@ -269,6 +325,7 @@ function nextLevel() {
   level++;
   bullets   = [];
   particles = [];
+  powerUps  = [];
   ship.reset();
   spawnAsteroids(3 + level);
 }
@@ -303,6 +360,8 @@ function update(dt) {
     particles.forEach(p => p.update(dt));
     particles = particles.filter(p => !p.dead);
     asteroids.forEach(a => a.update(dt));
+    powerUps.forEach(p => p.update(dt));
+    powerUps = powerUps.filter(p => !p.dead);
     if (deadTimer <= 0) { state = 'playing'; ship.reset(); }
     return;
   }
@@ -316,6 +375,7 @@ function update(dt) {
   bullets.forEach(b => b.update(dt));
   asteroids.forEach(a => a.update(dt));
   particles.forEach(p => p.update(dt));
+  powerUps.forEach(p => p.update(dt));
 
   bullets   = bullets.filter(b => !b.dead);
   particles = particles.filter(p => !p.dead);
@@ -330,6 +390,8 @@ function update(dt) {
         score += POINTS[a.size];
         explode(a.x, a.y, a.size * 5);
         newAsteroids.push(...a.split());
+        // 20% de probabilidad de que aparezca un power-up de velocidad
+        if (Math.random() < 0.2) powerUps.push(new SpeedPowerUp(a.x, a.y));
       }
     }
   }
@@ -345,6 +407,15 @@ function update(dt) {
       }
     }
   }
+
+  // Nave vs power-up de velocidad
+  for (const p of powerUps) {
+    if (!p.dead && dist(ship, p) < ship.radius + p.radius) {
+      p.dead = true;
+      ship.speedBoost = 5;  // 5 segundos de velocidad aumentada
+    }
+  }
+  powerUps = powerUps.filter(p => !p.dead);
 
   // Nivel completado
   if (asteroids.length === 0) nextLevel();
@@ -378,6 +449,16 @@ function drawHUD() {
   ctx.textAlign = 'center';
   ctx.fillText(`NIVEL ${level}`, W / 2, 26);
 
+  // Barra del power-up de velocidad (se reduce con el tiempo)
+  if (ship.speedBoost > 0) {
+    const BW   = 100;                 // ancho de la barra
+    const frac = ship.speedBoost / 5; // fracción de tiempo restante
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillRect(W / 2 - BW / 2, 34, BW, 6);
+    ctx.fillStyle = '#ffd700';
+    ctx.fillRect(W / 2 - BW / 2, 34, BW * frac, 6);
+  }
+
   for (let i = 0; i < lives; i++)
     drawLifeIcon(W - 16 - i * 22, 18);
 
@@ -398,6 +479,7 @@ function draw() {
   ctx.fillRect(0, 0, W, H);
 
   particles.forEach(p => p.draw());
+  powerUps.forEach(p => p.draw());
   asteroids.forEach(a => a.draw());
   bullets.forEach(b => b.draw());
   ship.draw();
