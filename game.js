@@ -81,6 +81,18 @@ const SKINS = [
     flameBase: -11,
     flameHalf: 4,
   },
+  {
+    id: 'titan',
+    name: 'TITÁN',
+    body:   [[40, 0], [-24, -18], [-14, 0], [-24, 18]],
+    stroke: '#b366ff',
+    fill:   'rgba(179, 102, 255, 0.15)',
+    flame:  'rgba(179, 102, 255, 0.9)',
+    flameBase: -16,
+    flameHalf: 8,
+    scale: 2,
+    scoreMult: 2,
+  },
 ];
 
 const SKIN_STORAGE = 'asteroids.skinId';
@@ -102,6 +114,13 @@ function setSkin(index) {
     if (i >= 0) { currentSkinIndex = i; currentSkin = SKINS[i]; }
   } catch (e) { /* sin storage */ }
 })();
+
+// Helpers de skin: escala del cuerpo y multiplicador de puntos
+const skinScale = () => currentSkin.scale || 1;
+const scoreMult = () => currentSkin.scoreMult || 1;
+const skinLabel  = () => currentSkin.scoreMult
+  ? `SKIN: ${currentSkin.name} · PUNTOS x${currentSkin.scoreMult}`
+  : `SKIN: ${currentSkin.name}`;
 
 // ── Bullet ────────────────────────────────────────────────────────────────────
 class Bullet {
@@ -281,7 +300,7 @@ function drawShipShape(skin, thrusting) {
   if (thrusting && Math.random() > 0.35) {
     ctx.beginPath();
     ctx.moveTo(skin.flameBase, -skin.flameHalf);
-    ctx.lineTo(skin.flameBase - rand(6, 14), 0);
+    ctx.lineTo(skin.flameBase - rand(6, 14) * (skin.scale || 1), 0);
     ctx.lineTo(skin.flameBase, skin.flameHalf);
     ctx.strokeStyle = skin.flame;
     ctx.stroke();
@@ -291,13 +310,15 @@ function drawShipShape(skin, thrusting) {
 class Ship {
   constructor() { this.reset(); }
 
+  // El hitbox escala con la skin (TITÁN es el doble de grande)
+  get radius() { return 12 * skinScale(); }
+
   reset() {
     this.x      = W / 2;
     this.y      = H / 2;
     this.angle  = -Math.PI / 2;
     this.vx     = 0;
     this.vy     = 0;
-    this.radius = 12;
     this.thrusting     = false;
     this.invincible    = 3;
     this.shootCooldown = 0;
@@ -339,7 +360,7 @@ class Ship {
   tryShoot() {
     if (this.shootCooldown > 0 || this.dead) return [];
     this.shootCooldown = 0.2;
-    const NOSE = 21;
+    const NOSE = 21 * skinScale();
     const ox = this.x + Math.cos(this.angle) * NOSE;
     const oy = this.y + Math.sin(this.angle) * NOSE;
 
@@ -367,11 +388,12 @@ class Ship {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
+    const s = skinScale();
 
     // Aura dorada con velocidad, cian con triple shot
     if (this.speedBoost > 0 || this.tripleShot > 0) {
       ctx.beginPath();
-      ctx.arc(0, 0, 22, 0, Math.PI * 2);
+      ctx.arc(0, 0, 22 * s, 0, Math.PI * 2);
       ctx.strokeStyle = this.speedBoost > 0
         ? 'rgba(255, 215, 0, 0.35)'
         : 'rgba(102, 204, 255, 0.35)';
@@ -383,12 +405,12 @@ class Ship {
     if (this.shieldTimer > 0) {
       const pulse = 1 + Math.sin(performance.now() / 120) * 0.04;
       ctx.beginPath();
-      ctx.arc(0, 0, 26 * pulse, 0, Math.PI * 2);
+      ctx.arc(0, 0, 26 * s * pulse, 0, Math.PI * 2);
       ctx.strokeStyle = 'rgba(0, 229, 255, 0.55)';
       ctx.lineWidth   = 2;
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(0, 0, 29 * pulse, 0, Math.PI * 2);
+      ctx.arc(0, 0, 29 * s * pulse, 0, Math.PI * 2);
       ctx.strokeStyle = 'rgba(0, 229, 255, 0.18)';
       ctx.lineWidth   = 5;
       ctx.stroke();
@@ -643,7 +665,7 @@ function update(dt) {
       if (!a.dead && !b.dead && dist(b, a) < a.radius) {
         b.dead = true;
         a.dead = true;
-        score += POINTS[a.size];
+        score += POINTS[a.size] * scoreMult();
         explode(a.x, a.y, a.size * 5);
         newAsteroids.push(...a.split());
         // 20% de probabilidad de power-up de velocidad o triple shot
@@ -657,7 +679,7 @@ function update(dt) {
       if (!s.dead && !b.dead && dist(b, s) < s.radius) {
         b.dead = true;
         s.dead = true;
-        score += STAR_POINTS;
+        score += STAR_POINTS * scoreMult();
         explode(s.x, s.y, 12);
         if (Math.random() < 0.2)
           powerUps.push(new PowerUp(s.x, s.y, Math.random() < 0.5 ? 'speed' : 'triple'));
@@ -674,7 +696,7 @@ function update(dt) {
       if (!a.dead && dist(ship, a) < ship.radius + a.radius * 0.82) {
         if (ship.shieldTimer > 0) {
           a.dead = true;
-          score += POINTS[a.size];
+          score += POINTS[a.size] * scoreMult();
           explode(a.x, a.y, a.size * 5);
         } else {
           killShip();
@@ -690,7 +712,7 @@ function update(dt) {
       if (!s.dead && dist(ship, s) < ship.radius + s.radius * 0.82) {
         if (ship.shieldTimer > 0) {
           s.dead = true;
-          score += STAR_POINTS;
+          score += STAR_POINTS * scoreMult();
           explode(s.x, s.y, 12);
         } else {
           killShip();
@@ -717,9 +739,11 @@ function update(dt) {
 
 // ── Draw ──────────────────────────────────────────────────────────────────────
 function drawLifeIcon(x, y) {
+  // Tamaño normalizado: todas las skins muestran iconos de vidas iguales
+  const s = 0.45 / skinScale();
   ctx.save();
   ctx.translate(x, y);
-  ctx.scale(0.45, 0.45);
+  ctx.scale(s, s);
   ctx.rotate(-Math.PI / 2);
   drawShipShape(currentSkin, false);
   ctx.restore();
@@ -773,7 +797,7 @@ function drawHUD() {
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffd700';
     ctx.font      = '14px monospace';
-    ctx.fillText(`SKIN: ${currentSkin.name}`, W / 2, H - 24);
+    ctx.fillText(skinLabel(), W / 2, H - 24);
   }
 }
 
@@ -813,7 +837,7 @@ function draw() {
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffd700';
     ctx.font      = '15px monospace';
-    ctx.fillText(`SKIN: ${currentSkin.name}`, W / 2, H / 2 + 106);
+    ctx.fillText(skinLabel(), W / 2, H / 2 + 106);
     ctx.fillStyle = 'rgba(255,255,255,0.65)';
     ctx.fillText('← → SKIN   ·   ESPACIO PARA REINICIAR', W / 2, H / 2 + 128);
   }
@@ -833,7 +857,7 @@ function draw() {
 
     ctx.fillStyle = '#ffd700';
     ctx.font      = '16px monospace';
-    ctx.fillText(`SKIN: ${currentSkin.name}`, W / 2, H / 2 + 48);
+    ctx.fillText(skinLabel(), W / 2, H / 2 + 48);
     ctx.fillStyle = 'rgba(255,255,255,0.65)';
     ctx.font      = '15px monospace';
     ctx.fillText('← → SKIN   ·   ESPACIO PARA JUGAR', W / 2, H / 2 + 78);
